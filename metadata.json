@@ -1,0 +1,7 @@
+{
+  "name": "LinguaTube Lesson Generator",
+  "description": "An application to generate language lessons from YouTube videos. It offers bilingual support for beginners and a monolingual experience for advanced learners, creating vocabulary lists and interactive exercises based on the video's content.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
