@@ -34,8 +34,13 @@ export const VoiceChat: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
     const cleanup = useCallback(() => {
         mediaStreamRef.current?.getTracks().forEach(track => track.stop());
         scriptProcessorRef.current?.disconnect();
-        inputAudioContextRef.current?.close().catch(console.error);
-        outputAudioContextRef.current?.close().catch(console.error);
+        
+        if (inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed') {
+          inputAudioContextRef.current.close().catch(console.error);
+        }
+        if (outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed') {
+          outputAudioContextRef.current.close().catch(console.error);
+        }
 
         sessionPromiseRef.current?.then(session => session.close()).catch(console.error);
 
@@ -71,8 +76,6 @@ export const VoiceChat: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
 
             // CRITICAL FIX: Ensure audio context is active on user gesture
             if (outputAudioContextRef.current.state === 'suspended') {
-                // Play a silent buffer to unlock the audio context, and then resume.
-                // This is a robust way to handle browser autoplay policies.
                 const context = outputAudioContextRef.current;
                 const buffer = context.createBuffer(1, 1, 22050);
                 const source = context.createBufferSource();
@@ -93,8 +96,9 @@ export const VoiceChat: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
                 callbacks: {
                     onopen: () => {
                         setStatus('active');
-                        const source = inputAudioContextRef.current!.createMediaStreamSource(stream);
-                        const scriptProcessor = inputAudioContextRef.current!.createScriptProcessor(4096, 1, 1);
+                        const inputCtx = inputAudioContextRef.current!;
+                        const source = inputCtx.createMediaStreamSource(stream);
+                        const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
                         scriptProcessorRef.current = scriptProcessor;
 
                         scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
@@ -105,7 +109,14 @@ export const VoiceChat: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
                             });
                         };
                         source.connect(scriptProcessor);
-                        scriptProcessor.connect(inputAudioContextRef.current!.destination);
+                        
+                        // FIX: Route processor through a muted GainNode to prevent mic playback.
+                        // This keeps the audio graph active for the processor to work without
+                        // routing the user's voice to their speakers.
+                        const gainNode = inputCtx.createGain();
+                        gainNode.gain.setValueAtTime(0, inputCtx.currentTime);
+                        scriptProcessor.connect(gainNode);
+                        gainNode.connect(inputCtx.destination);
                     },
                     onmessage: async (message: LiveServerMessage) => {
                         // Handle transcription
@@ -150,7 +161,6 @@ export const VoiceChat: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
                         cleanup();
                     },
                     onclose: () => {
-                        // Don't set status to stopped if it was already an error
                         setStatus(prev => prev === 'error' ? 'error' : 'stopped');
                         cleanup();
                     },
@@ -223,12 +233,14 @@ export const VoiceChat: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
             {transcript.length > 0 && (
                 <div className="mt-4 p-4 bg-gray-900/70 rounded-lg max-h-80 overflow-y-auto space-y-4">
                     {transcript.map((entry, index) => (
-                        <div key={index} className={`flex ${entry.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-xl ${entry.speaker === 'user' ? 'bg-indigo-800 text-white' : 'bg-gray-700 text-gray-200'}`}>
-                               <p className="font-bold capitalize text-sm mb-1">{entry.speaker}</p>
-                               <p>{entry.text}</p>
+                        entry.text.trim() && (
+                            <div key={index} className={`flex ${entry.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-xl ${entry.speaker === 'user' ? 'bg-indigo-800 text-white' : 'bg-gray-700 text-gray-200'}`}>
+                                <p className="font-bold capitalize text-sm mb-1">{entry.speaker}</p>
+                                <p>{entry.text}</p>
+                                </div>
                             </div>
-                        </div>
+                        )
                     ))}
                 </div>
             )}
